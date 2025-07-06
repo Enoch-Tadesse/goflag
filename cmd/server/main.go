@@ -1,20 +1,19 @@
 package main
 
 import (
-	"github.com/Enoch-Tadesse/goflag/config"
-	"github.com/Enoch-Tadesse/goflag/pkg/db"
+	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"github.com/Enoch-Tadesse/goflag/config"
+	"github.com/Enoch-Tadesse/goflag/db/connection"
 )
 
 func init() {
 	config.LoadEnvVariable()
-	db.ConnectToDb()
-	db.MigrateTables()
+	connection.ConnectToDB()
+	connection.RunMigrations()
 }
 
 func main() {
-	router := gin.Default()
 
-	router.Run(":8080")
+	http.ListenAndServe(":8080", nil)
 }
