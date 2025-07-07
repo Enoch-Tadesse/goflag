@@ -12,7 +12,7 @@ import (
 
 var DB *sql.DB
 
-func ConnectToDB() {
+func ConnectToDB() error {
 
 	var err error
 	user := os.Getenv("DB_USER")
@@ -25,22 +25,24 @@ func ConnectToDB() {
 
 	DB, err = sql.Open("mysql", dsn)
 	if err != nil {
-		log.Fatalf("Failed to connect to Database. Error: %v", err)
+		return fmt.Errorf("failed to connect to Database. Error: %v", err)
 	}
 
 	if err := DB.Ping(); err != nil {
-		log.Fatalf("Failed to ping database: %v", err)
+		return fmt.Errorf("failed to ping database: %v", err)
 	}
 
 	log.Println("Successfully connected to DB")
+	return nil
 }
 
-func RunMigrations() {
+func RunMigrations() error {
 	if err := goose.SetDialect("mysql"); err != nil {
-		log.Fatalf("failed to set goose dialect: %v", err)
+		return fmt.Errorf("failed to set goose dialect: %v", err)
 	}
 
 	if err := goose.Up(DB, "db/migrations"); err != nil {
-		log.Fatal(err)
+		return err
 	}
+	return nil
 }
