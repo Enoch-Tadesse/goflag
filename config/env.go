@@ -1,16 +1,16 @@
 package config
 
 import (
-	"log"
+	"fmt"
 	"os"
 
 	"github.com/joho/godotenv"
 )
 
-func LoadEnvVariable() {
-	err := godotenv.Load(".env")
+func LoadEnvVariable(file string) error {
+	err := godotenv.Load(file)
 	if err != nil {
-		log.Fatalf("Unable to load dotenv file: %v ", err)
+		return fmt.Errorf("unable to load dotenv file: %v ", err)
 	}
 	variables := []string{
 		"DB_USER",
@@ -21,7 +21,8 @@ func LoadEnvVariable() {
 	}
 	for _, key := range variables {
 		if value := os.Getenv(key); value == "" {
-			log.Fatalf("Environment variable %s is missing", key)
+			return fmt.Errorf("environment variable %s is missing", key)
 		}
 	}
+	return nil
 }
