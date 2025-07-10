@@ -11,6 +11,7 @@ import (
 
 	conn "github.com/Enoch-Tadesse/goflag/db/connection"
 	"github.com/Enoch-Tadesse/goflag/db/models"
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
 
@@ -22,7 +23,7 @@ func GetAllSegments(w http.ResponseWriter, r *http.Request) {
 	rows, err := conn.DB.QueryContext(ctx, `
 		SELECT id, name, created_at
 		FROM segments
-	`, nil)
+	`)
 
 	if err != nil {
 		log.Printf("GetAllSegments: Failed to fetch all segments. %v", err)
@@ -55,7 +56,7 @@ func GetAllSegments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type Rule struct {
+	type rule struct {
 		ID        string `json:"id"`
 		Attribute string `json:"attribute"`
 		Operator  string `json:"operator"`
@@ -65,7 +66,7 @@ func GetAllSegments(w http.ResponseWriter, r *http.Request) {
 
 	type Result struct {
 		Segment Segment `json:"segment"`
-		Rules   []Rule  `json:"rules"`
+		Rules   []rule  `json:"rules"`
 	}
 
 	var results struct {
@@ -75,7 +76,7 @@ func GetAllSegments(w http.ResponseWriter, r *http.Request) {
 	for _, seg := range segments {
 		result := Result{
 			Segment: seg,
-			Rules:   []Rule{},
+			Rules:   []rule{},
 		}
 		id := seg.ID
 		// get all segment rules specific to a single segment
@@ -95,7 +96,7 @@ func GetAllSegments(w http.ResponseWriter, r *http.Request) {
 			result.Segment = seg
 
 			for innerRows.Next() {
-				var rule Rule
+				var rule rule
 				if err := innerRows.Scan(&rule.ID, &rule.Attribute, &rule.Operator, &rule.Value, &rule.CreatedAt); err != nil {
 					log.Printf("GetAllSegments: Failed to scan innerRow: %v", err)
 					continue
@@ -138,19 +139,36 @@ func GetSegmentByName(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// get the associalted segment rules
-	row = conn.DB.QueryRowContext(ctx, `
+	rows, err := conn.DB.QueryContext(ctx, `
 		SELECT id, attribute, operator, value, created_at
 		FROM segment_rules
-		WHERE id = ?
+		WHERE seg_id = ?
 	`, segment.ID)
 
-	var rule models.SegmentRule
-	var rules []models.SegmentRule
+	if err != nil {
+		log.Printf("GetSegmentByName: failed to fetch rows: %v", err)
+		http.Error(w, "Failed to fetch segment rules", http.StatusInternalServerError)
+		return
+	}
+
+	defer rows.Close()
+
+	type segmentRule struct {
+		ID        uuid.UUID `json:"id"`
+		Attribute string    `json:"attribute"`
+		Operator  string    `json:"operator"`
+		Value     string    `json:"value"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+
+	var rules []segmentRule
 
 	// scan all the segment rules
-	for {
-		if err := row.Scan(&rule.ID, &rule.Attribute, &rule.Operator, &rule.Value, &rule.CreatedAt); err != nil {
+	for rows.Next() {
+		var rule segmentRule
+		if err := rows.Scan(&rule.ID, &rule.Attribute, &rule.Operator, &rule.Value, &rule.CreatedAt); err != nil {
 			if err == sql.ErrNoRows {
+				log.Print("some error")
 				break
 			}
 			log.Printf("GetSegmentByName: Failed to scan result rows: %v", err)
@@ -161,8 +179,8 @@ func GetSegmentByName(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var response struct {
-		Segment models.Segment       `json:"segment"`
-		Rules   []models.SegmentRule `json:"rules"`
+		Segment models.Segment `json:"segment"`
+		Rules   []segmentRule  `json:"rules"`
 	}
 
 	response.Segment = segment
