@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -16,14 +17,6 @@ type rule struct {
 	Attribute string `json:"attribute"`
 	Operator  string `json:"operator"`
 	Value     string `json:"value"`
-}
-
-func rollbackWithError(w http.ResponseWriter, tx *sql.Tx, logMsg string, errMsg string, err error) {
-	log.Printf("CreateSegment: %s: %v", logMsg, err)
-	if rbErr := tx.Rollback(); rbErr != nil {
-		log.Printf("CreateSegment: Rollback also failed: %v", rbErr)
-	}
-	http.Error(w, errMsg, http.StatusInternalServerError)
 }
 
 func CreateSegment(w http.ResponseWriter, r *http.Request) {
@@ -88,31 +81,65 @@ func CreateSegment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	segmentID := uuid.New().String()
+	type Segment struct {
+		ID        uuid.UUID `json:"id"`
+		Name      string    `json:"name"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+	type Rule struct {
+		ID        uuid.UUID `json:"id"`
+		Attribute string    `json:"attribute"`
+		Operator  string    `json:"operator"`
+		Value     string    `json:"value"`
+		CreatedAt time.Time `json:"created_at"`
+	}
+
+	type Response struct {
+		Segment Segment `json:"segment"`
+		Rules   []Rule  `json:"rules"`
+	}
+	var response Response
+
+	segmentID := uuid.New()
+	now := time.Now()
 
 	_, err = tx.ExecContext(ctx, `
-		INSERT INTO segments(id, name)
-		VALUES (?, ?)
-	`, segmentID, body.Name)
+		INSERT INTO segments(id, name, created_at)
+		VALUES (?, ?, ?)
+	`, segmentID, body.Name, now)
 	if err != nil {
 		rollbackWithError(w, tx, "Failed to insert segment", "Failed to insert segment", err)
 		return
 	}
 
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO segment_rules(id, seg_id, attribute, operator, value) VALUES (?, ?, ?, ?, ?)`)
+	// write the segment data on response body
+	response.Segment.ID = segmentID
+	response.Segment.Name = body.Name
+	response.Segment.CreatedAt = now
+
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO segment_rules(id, seg_id, attribute, operator, value, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		http.Error(w, "Failed to prepare db statement", http.StatusInternalServerError)
 		return
 	}
 	defer stmt.Close()
 
+	rulesCreatedAt := time.Now()
 	for _, rule := range body.Rules {
-		id := uuid.New().String()
-		_, err := stmt.ExecContext(ctx, id, segmentID, rule.Attribute, rule.Operator, rule.Value)
+		var respRule Rule
+		id := uuid.New()
+		_, err := stmt.ExecContext(ctx, id, segmentID, rule.Attribute, rule.Operator, rule.Value, rulesCreatedAt)
 		if err != nil {
 			rollbackWithError(w, tx, "Failed to insert segmet rule", "Failed to create segment rule", err)
 			return
 		}
+		respRule.ID = id
+		respRule.Attribute = rule.Attribute
+		respRule.Operator = rule.Operator
+		respRule.Value = rule.Value
+		respRule.CreatedAt = rulesCreatedAt
+
+		response.Rules = append(response.Rules, respRule)
 	}
 
 	err = tx.Commit()
@@ -122,7 +149,8 @@ func CreateSegment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Add("Content-Type", "text/plain")
+	w.Header().Add("Content-Type", "application/json")
+	w.Header().Set("Location", fmt.Sprintf("/segments/%s", body.Name))
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte("Segment successfully created"))
+	json.NewEncoder(w).Encode(response)
 }
