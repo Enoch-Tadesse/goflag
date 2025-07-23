@@ -7,6 +7,7 @@ import (
 	"reflect"
 )
 
+// rollbackWithError rolls back the transaction and sends a consistent error response.
 func rollbackWithError(w http.ResponseWriter, tx *sql.Tx, logMsg string, errMsg string, err error) {
 	log.Printf("CreateSegment: %s: %v", logMsg, err)
 	if rbErr := tx.Rollback(); rbErr != nil {
@@ -15,9 +16,14 @@ func rollbackWithError(w http.ResponseWriter, tx *sql.Tx, logMsg string, errMsg 
 	http.Error(w, errMsg, http.StatusInternalServerError)
 }
 
+// zeroFields takes a struct or a pointer to struct and returns all the keys that have zero values
 func zeroFields(data any, exclude ...string) []string {
 	v := reflect.ValueOf(data)
 	t := reflect.TypeOf(data)
+
+	if v.Kind() != reflect.Struct {
+		panic("zeroFields: input must be a struct or pointer to struct")
+	}
 
 	// dereference if data is a pointer
 	if v.Kind() == reflect.Ptr {

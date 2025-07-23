@@ -13,16 +13,19 @@ import (
 	"github.com/google/uuid"
 )
 
+// rule represents a condition that defines which users belong in a segment.
 type rule struct {
 	Attribute string `json:"attribute"`
 	Operator  string `json:"operator"`
 	Value     string `json:"value"`
 }
 
+// CreateSegment handles the creation of a new segment with rules.
 func CreateSegment(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// Parse and validate the request body
 	var body struct {
 		Name  string `json:"name"`
 		Rules []rule `json:"rules"`
@@ -39,13 +42,13 @@ func CreateSegment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// check if there exist atlease one rule
+	// check if there exists atleast one rule
 	if len(body.Rules) == 0 {
-		http.Error(w, "A segment must have atlease one rule", http.StatusBadRequest)
+		http.Error(w, "A segment must have at least one rule", http.StatusBadRequest)
 		return
 	}
 
-	// check for rules integration
+	// Validate each rule in the segment
 	for _, rule := range body.Rules {
 		if rule.Attribute == "" || rule.Operator == "" || rule.Value == "" {
 			http.Error(w, "All rules must have non-empty attribute, operator, and value", http.StatusBadRequest)
@@ -53,34 +56,35 @@ func CreateSegment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// check if a segment with similar name already exist
+	// Check if a segment with the same name already exists
 	row := conn.DB.QueryRowContext(ctx, `
-		SELECT 1 FROM segments
-		WHERE name = ?
+		SELECT 1 FROM segments WHERE name = ?
 	`, body.Name)
+
 	var exists int
 	err = row.Scan(&exists)
 
-	// if the name exist
 	if err == nil {
-		http.Error(w, "A segment with the same name already exist", http.StatusBadRequest)
+		http.Error(w, "A segment with the same name already exists", http.StatusBadRequest)
 		return
 	}
 
 	if err != sql.ErrNoRows {
+		// An unexpected error occurred when querying for segment name
 		log.Printf("CreateSegment: Failed to check for duplicate segment name %s: %v", body.Name, err)
 		http.Error(w, "Failed to check segment duplication", http.StatusInternalServerError)
 		return
 	}
 
-	// create a db transaction
+	// Begin DB transaction
 	tx, err := conn.DB.Begin()
 	if err != nil {
-		log.Printf("CreateSegment: failed to begin DB transaction: %v", err)
+		log.Printf("CreateSegment: Failed to begin DB transaction: %v", err)
 		http.Error(w, "Failed to initiate transaction for database", http.StatusInternalServerError)
 		return
 	}
 
+	// Define local response structures
 	type Segment struct {
 		ID        uuid.UUID `json:"id"`
 		Name      string    `json:"name"`
@@ -93,16 +97,16 @@ func CreateSegment(w http.ResponseWriter, r *http.Request) {
 		Value     string    `json:"value"`
 		CreatedAt time.Time `json:"created_at"`
 	}
-
 	type Response struct {
 		Segment Segment `json:"segment"`
 		Rules   []Rule  `json:"rules"`
 	}
-	var response Response
 
+	var response Response
 	segmentID := uuid.New()
 	now := time.Now()
 
+	// Insert the segment into the `segments` table
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO segments(id, name, created_at)
 		VALUES (?, ?, ?)
@@ -112,14 +116,20 @@ func CreateSegment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// write the segment data on response body
-	response.Segment.ID = segmentID
-	response.Segment.Name = body.Name
-	response.Segment.CreatedAt = now
+	// Populate segment response data
+	response.Segment = Segment{
+		ID:        segmentID,
+		Name:      body.Name,
+		CreatedAt: now,
+	}
 
-	stmt, err := tx.PrepareContext(ctx, `INSERT INTO segment_rules(id, seg_id, attribute, operator, value, created_at) VALUES (?, ?, ?, ?, ?, ?)`)
+	// Prepare statement for inserting multiple rules efficiently
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO segment_rules(id, seg_id, attribute, operator, value, created_at)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`)
 	if err != nil {
-		http.Error(w, "Failed to prepare db statement", http.StatusInternalServerError)
+		http.Error(w, "Failed to prepare DB statement", http.StatusInternalServerError)
 		return
 	}
 	defer stmt.Close()
@@ -127,28 +137,35 @@ func CreateSegment(w http.ResponseWriter, r *http.Request) {
 	rulesCreatedAt := time.Now()
 	for _, rule := range body.Rules {
 		var respRule Rule
-		id := uuid.New()
-		_, err := stmt.ExecContext(ctx, id, segmentID, rule.Attribute, rule.Operator, rule.Value, rulesCreatedAt)
+		ruleID := uuid.New()
+
+		// Insert each rule into the `segment_rules` table
+		_, err := stmt.ExecContext(ctx, ruleID, segmentID, rule.Attribute, rule.Operator, rule.Value, rulesCreatedAt)
 		if err != nil {
-			rollbackWithError(w, tx, "Failed to insert segmet rule", "Failed to create segment rule", err)
+			rollbackWithError(w, tx, "Failed to insert segment rule", "Failed to create segment rule", err)
 			return
 		}
-		respRule.ID = id
-		respRule.Attribute = rule.Attribute
-		respRule.Operator = rule.Operator
-		respRule.Value = rule.Value
-		respRule.CreatedAt = rulesCreatedAt
 
+		// Populate rule response
+		respRule = Rule{
+			ID:        ruleID,
+			Attribute: rule.Attribute,
+			Operator:  rule.Operator,
+			Value:     rule.Value,
+			CreatedAt: rulesCreatedAt,
+		}
 		response.Rules = append(response.Rules, respRule)
 	}
 
+	// Commit the transaction
 	err = tx.Commit()
 	if err != nil {
-		log.Printf("CreateSegnemt: Failed to commit transaction: %v", err)
-		http.Error(w, "Failed to fianalize segment creation", http.StatusInternalServerError)
+		log.Printf("CreateSegment: Failed to commit transaction: %v", err)
+		http.Error(w, "Failed to finalize segment creation", http.StatusInternalServerError)
 		return
 	}
 
+	// Return success response with Location header
 	w.Header().Add("Content-Type", "application/json")
 	w.Header().Set("Location", fmt.Sprintf("/segments/%s", body.Name))
 	w.WriteHeader(http.StatusCreated)
