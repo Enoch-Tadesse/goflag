@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	conn "github.com/Enoch-Tadesse/goflag/db/connection"
@@ -114,26 +115,31 @@ func GetSegmentByName(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Extract segment name from URL path variable
+	// Extract segment id from URL path parameter
 	vars := mux.Vars(r)
-	name := vars["name"]
+	idStr := strings.TrimSpace(vars["id"])
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		http.Error(w, "invalid uuid", http.StatusBadRequest)
+		return
+	}
 
 	// Query segment details by name
 	row := conn.DB.QueryRowContext(ctx, `
 		SELECT id, name, created_at
 		FROM segments
-		WHERE name = ?
+		WHERE id = ?
 		LIMIT 1
-	`, name)
+	`, id)
 
 	var segment models.Segment
-	err := row.Scan(&segment.ID, &segment.Name, &segment.CreatedAt)
+	err = row.Scan(&segment.ID, &segment.Name, &segment.CreatedAt)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			http.Error(w, fmt.Sprintf("Segment with name %s does not exist", name), http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("Segment with id %s does not exist", id), http.StatusBadRequest)
 			return
 		}
-		log.Printf("GetSegmentByName: Failed to check if segment %s exists: %v", name, row.Err())
+		log.Printf("GetSegmentByName: Failed to check if segment %s exists: %v", id, row.Err())
 		http.Error(w, "Failed to check if segment exist", http.StatusInternalServerError)
 		return
 	}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	conn "github.com/Enoch-Tadesse/goflag/db/connection"
+	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 )
 
@@ -20,23 +21,27 @@ func DeleteSegment(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Extract segment name from URL path parameter
+	// Extract segment id from URL path parameter
 	vars := mux.Vars(r)
-	name := vars["name"]
-	name = strings.TrimSpace(name)
+	idStr := strings.TrimSpace(vars["id"])
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		http.Error(w, "invalid uuid", http.StatusBadRequest)
+		return
+	}
 
-	// Step 1: Look up the segment by name to get its ID
+	// Check if the segment exists
 	row := conn.DB.QueryRowContext(ctx, `
-		SELECT id
+		SELECT 1
 		FROM segments
-		WHERE name = ?
-	`, name)
+		WHERE id = ?
+	`, id)
 
-	var segmentID string
-	if err := row.Scan(&segmentID); err != nil {
+	var exists bool
+	if err := row.Scan(&exists); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// If no segment found, return 400
-			http.Error(w, fmt.Sprintf("Segment with name %s does not exist", name), http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("Segment with id %s does not exist", id), http.StatusBadRequest)
 			return
 		}
 		// Other unexpected DB error
@@ -45,7 +50,7 @@ func DeleteSegment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 2: Start a transaction to safely delete both rules and the segment
+	// Start a transaction to safely delete both rules and the segment
 	tx, err := conn.DB.BeginTx(ctx, nil)
 	if err != nil {
 		log.Printf("DeleteSegment: Failed to begin transaction: %v", err)
@@ -53,36 +58,36 @@ func DeleteSegment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 3: Delete all associated rules for the segment
+	// Delete all associated rules for the segment
 	_, err = tx.ExecContext(ctx, `
 		DELETE 
 		FROM segment_rules
 		WHERE seg_id = ?
-	`, segmentID)
+	`, id)
 
 	if err != nil {
 		rollbackWithError(w, tx, "DeleteSegment: Failed to delete segment rules", "Failed to delete segment rules", err)
 		return
 	}
 
-	// Step 4: Delete the segment itself
+	// Delete the segment itself
 	_, err = tx.ExecContext(ctx, `
 		DELETE
 		FROM segments
 		WHERE id = ?
-	`, segmentID)
+	`, id)
 	if err != nil {
 		rollbackWithError(w, tx, "DeleteSegment: Failed to delete segment", "Failed to delete segment", err)
 		return
 	}
 
-	// Step 5: Commit the transaction
+	// Commit the transaction
 	if err := tx.Commit(); err != nil {
 		rollbackWithError(w, tx, "DeleteSegment: Failed to commit transaction", "Failed to commit transaction", err)
 		return
 	}
 
-	// Step 6: Return success response
+	// Return success response
 	type response struct {
 		Message string `json:"message"`
 	}

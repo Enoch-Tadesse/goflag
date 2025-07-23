@@ -14,6 +14,7 @@ import (
 	conn "github.com/Enoch-Tadesse/goflag/db/connection"
 	"github.com/Enoch-Tadesse/goflag/db/models"
 	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 )
 
 // AppendRule handles adding a new rule to an existing segment.
@@ -23,9 +24,17 @@ func AppendRule(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// Extract segment id from URL path parameter
+	vars := mux.Vars(r)
+	idStr := strings.TrimSpace(vars["id"])
+	seg_id, err := uuid.Parse(idStr)
+	if err != nil {
+		http.Error(w, "invalid uuid", http.StatusBadRequest)
+		return
+	}
+
 	// Input structure expects segment name to find the segment
 	var body struct {
-		SegName   string `json:"segment_name"`
 		Attribute string `json:"attribute"`
 		Operator  string `json:"operator"`
 		Value     string `json:"value"`
@@ -45,20 +54,19 @@ func AppendRule(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// trim the datas
-	body.SegName = strings.TrimSpace(body.SegName)
 	body.Attribute = strings.TrimSpace(body.Attribute)
 	body.Operator = strings.TrimSpace(body.Operator)
 	body.Value = strings.TrimSpace(body.Value)
 
-	// Find segment by name, scan fields explicitly
+	// Find segment by id, scan fields explicitly
 	var seg models.Segment
-	row := conn.DB.QueryRowContext(ctx, `SELECT id, name, created_at, updated_at FROM segments WHERE name = ?`, body.SegName)
+	row := conn.DB.QueryRowContext(ctx, `SELECT id, name, created_at, updated_at FROM segments WHERE id = ?`, seg_id)
 	if err := row.Scan(&seg.ID, &seg.Name, &seg.CreatedAt, &seg.UpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			http.Error(w, fmt.Sprintf("Segment %s does not exist", body.SegName), http.StatusBadRequest)
+			http.Error(w, fmt.Sprintf("Segment %s does not exist", seg_id), http.StatusBadRequest)
 			return
 		}
-		log.Printf("AppendRule: Failed to check if segment %s exists: %v", body.SegName, err)
+		log.Printf("AppendRule: Failed to check if segment %s exists: %v", seg_id, err)
 		http.Error(w, "Failed to check if segment exists", http.StatusInternalServerError)
 		return
 	}
@@ -68,7 +76,7 @@ func AppendRule(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 
 	// Insert rule into segment_rules table
-	_, err := conn.DB.ExecContext(ctx, `
+	_, err = conn.DB.ExecContext(ctx, `
 		INSERT INTO segment_rules (id, seg_id, attribute, operator, value, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)
 	`, ruleID, seg.ID, body.Attribute, body.Operator, body.Value, now)
