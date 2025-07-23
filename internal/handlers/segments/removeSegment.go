@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	conn "github.com/Enoch-Tadesse/goflag/db/connection"
@@ -22,6 +23,7 @@ func DeleteSegment(w http.ResponseWriter, r *http.Request) {
 	// Extract segment name from URL path parameter
 	vars := mux.Vars(r)
 	name := vars["name"]
+	name = strings.TrimSpace(name)
 
 	// Step 1: Look up the segment by name to get its ID
 	row := conn.DB.QueryRowContext(ctx, `

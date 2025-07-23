@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	conn "github.com/Enoch-Tadesse/goflag/db/connection"
@@ -36,6 +37,7 @@ func CreateSegment(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	body.Name = strings.TrimSpace(body.Name)
 
 	if body.Name == "" {
 		http.Error(w, "Name is required", http.StatusBadRequest)
@@ -50,6 +52,10 @@ func CreateSegment(w http.ResponseWriter, r *http.Request) {
 
 	// Validate each rule in the segment
 	for _, rule := range body.Rules {
+		// trim the datas
+		rule.Attribute = strings.TrimSpace(rule.Attribute)
+		rule.Value = strings.TrimSpace(rule.Value)
+		rule.Operator = strings.TrimSpace(rule.Operator)
 		if rule.Attribute == "" || rule.Operator == "" || rule.Value == "" {
 			http.Error(w, "All rules must have non-empty attribute, operator, and value", http.StatusBadRequest)
 			return
